@@ -58,6 +58,9 @@ sha256sum -c SHA256SUMS
 
 </details>
 
+第一次上手请先看 [中文入门指南](docs/GETTING_STARTED.zh-CN.md)：从「为什么要换 ReLU」讲到
+微调、导出 ONNX、转 RKNN、板端部署的完整流程，以及常见坑。
+
 ## 1. 官方 YOLOv5 微调
 
 已验证的用户训练入口为 [Ultralytics YOLOv5 v6.2](https://github.com/ultralytics/yolov5/tree/v6.2)。
