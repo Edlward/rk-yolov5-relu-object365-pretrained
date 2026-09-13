@@ -61,14 +61,16 @@ sha256sum -c SHA256SUMS
 第一次上手请先看 [中文入门指南](docs/GETTING_STARTED.zh-CN.md)：从「为什么要换 ReLU」讲到
 微调、导出 ONNX、转 RKNN、板端部署的完整流程，以及常见坑。
 
-## 1. 官方 YOLOv5 微调
+## 1. aiRockchip YOLOv5 微调
 
-已验证的用户训练入口为 [Ultralytics YOLOv5 v6.2](https://github.com/ultralytics/yolov5/tree/v6.2)。
-将 `--weights` 换成上表中与你的任务最接近的权重，并将 `--data` 指向你的 YOLO 数据集 YAML。
+微调入口为 [aiRockchip YOLOv5](https://github.com/airockchip/yolov5) commit `d25a075`，
+与第 2 节导出用的是同一个仓库。将 `--weights` 换成上表中与你的任务最接近的权重，
+`--data` 指向你的 YOLO 数据集 YAML：
 
 ```bash
-git clone --branch v6.2 --depth 1 https://github.com/ultralytics/yolov5.git
+git clone https://github.com/airockchip/yolov5.git
 cd yolov5
+git checkout d25a075
 pip install -r requirements.txt
 
 python train.py \
@@ -77,8 +79,25 @@ python train.py \
   --epochs 100 --img 640 --batch 16
 ```
 
-N 权重已在干净环境的官方 v6.2 `train.py` 中完成一轮训练 smoke，日志显示
-`Transferred 349/349 items`。完整记录见 [验证记录](docs/VERIFICATION.md)。
+> **不要用官方 Ultralytics YOLOv5 做微调。** 其 `train.py` 会按 `model.yaml` 重建模型，
+> 而 v6.2 的 `Conv` 硬编码 `nn.SiLU()`、`parse_model` 也不读 `activation` 字段，结果会把本仓库的
+> ReLU **静默换回 SiLU**——激活层没有参数，state dict 照样全量 transfer、不报任何错。
+> aiRockchip 分支的 `Conv` 默认即 `nn.ReLU()` 且 `parse_model` 支持 `activation` 字段，
+> 微调前后算子结构一致。原因与实测数据见
+> [ADR-0006](docs/adr/0006-fine-tune-with-airockchip-yolov5.md)。
+
+微调后建议确认激活函数没有被动过（COCO N 规格应显示 `ReLU: 57, SiLU: 0`）：
+
+```python
+import collections
+import torch
+
+model = torch.load('runs/train/exp/weights/best.pt', map_location='cpu')['model']
+print(collections.Counter(type(m).__name__ for m in model.modules()))
+```
+
+v6.2 下权重可正常加载并完成训练（`Transferred 349/349 items`），该兼容性记录保留在
+[验证记录](docs/VERIFICATION.md)。
 
 ## 2. Rockchip ONNX 导出
 

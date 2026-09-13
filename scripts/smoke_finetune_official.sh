@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+#
+# Compatibility smoke test: proves a Release checkpoint loads in the official v6.2 training
+# script and completes an epoch.
+#
+# This is NOT the supported fine-tuning path. v6.2 rebuilds the model from model.yaml and
+# silently restores SiLU, so it must not be used to produce deployable weights. Fine-tune with
+# aiRockchip YOLOv5 d25a075 instead (ADR-0006), and re-check the activation count afterwards as
+# recorded in docs/VERIFICATION.md.
 set -euo pipefail
 
 weights=${1:?usage: smoke_finetune_official.sh /weights/model.pt}

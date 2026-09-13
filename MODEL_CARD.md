@@ -23,5 +23,8 @@ MMYOLO 原日志为 0.257、0.427。随机张量与真实 COCO 图片的 P3/P4/P
 ## 限制
 
 - ReLU 是模型属性，不能将权重加载进默认 SiLU 模型后期待相同行为。
+- **微调须使用 aiRockchip YOLOv5 `d25a075`。** 官方 Ultralytics YOLOv5 v6.2 的 `train.py`
+  会按 `model.yaml` 重建模型，其 `Conv` 硬编码 SiLU，实测微调后 ReLU 归零、导出 ONNX 的
+  `Relu` 算子为 0。详见 [ADR-0006](docs/adr/0006-fine-tune-with-airockchip-yolov5.md)。
 - COCO 与 Objects365 的检测头类别数不同；下游任务须按自己的数据 YAML 重新适配。
 - RKNN-friendly ONNX 导出已验证；目标 SoC 的 `.rknn`、量化精度和部署性能需在目标环境验证。

@@ -84,20 +84,22 @@ sha256sum -c SHA256SUMS
 
 下载后的文件建议统一放在仓库根目录的 `weights/` 下。
 
-### 2.2 两个上游工具链（版本必须用这两个）
+### 2.2 上游工具链（微调和导出都用同一个）
 
 ```bash
 mkdir -p external && cd external
 
-# 微调用：官方 Ultralytics YOLOv5 v6.2
-git clone --branch v6.2 --depth 1 https://github.com/ultralytics/yolov5.git yolov5-ultralytics-v6.2
-
-# 导出用：aiRockchip YOLOv5，必须是 d25a075 这个 commit
+# 微调与导出都用它，必须钉住 d25a075 这个 commit
 git clone https://github.com/airockchip/yolov5.git yolov5-airockchip
 git -C yolov5-airockchip checkout d25a075
 ```
 
-> 为什么要钉死版本：这个组合已经通过了加载权重、训练、导出的冒烟测试。上游一更新，行为可能悄悄变化。
+> 为什么要钉死版本：这个 commit 已经通过了加载权重、微调、导出的冒烟测试，上游一更新行为可能悄悄变化。
+>
+> **为什么不建议用官方 Ultralytics YOLOv5：** 它的 `train.py` 会按 `model.yaml` 重建模型，
+> 而 v6.2 的 `Conv` 硬编码 SiLU、也不读 `activation` 字段，结果会把本仓库的 ReLU
+> **静默换回 SiLU**——不报任何错、权重也照样全部 transfer。原因与实测数据见
+> [ADR-0006](adr/0006-fine-tune-with-airockchip-yolov5.md)。
 
 ---
 
@@ -150,22 +152,21 @@ Dockerfile 基线是 `pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime`。
 ```powershell
 py -3.8 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -U pip
-.\.venv\Scripts\python.exe -m pip install -r external\yolov5-ultralytics-v6.2\requirements.txt
 .\.venv\Scripts\python.exe -m pip install -r external\yolov5-airockchip\requirements.txt
 .\.venv\Scripts\python.exe -m pip install "numpy<2" onnx==1.16.1 onnxsim==0.4.36
 ```
 
-两个注意点：
+注意点：
 
-- **`numpy<2` 别省。** YOLOv5 v6.2 里有 `np.int` 老写法，numpy 2.x 直接报错。
-- **`np.int` 兼容修复。** 项目 Dockerfile 里有一句 `sed -i 's/np\.int/int/g' yolov5/utils/dataloaders.py`。
-  如果你在本地克隆的 `external/yolov5-ultralytics-v6.2` 上跑、且 numpy >= 1.24，需要同样处理：
-
-  ```powershell
-  # 把 utils\dataloaders.py 里的 .astype(np.int) 全部替换为 .astype(int)（共 3 处）
-  ```
-
+- **`numpy<2` 别省。** aiRockchip 分支在 numpy 1.24 上已实测可跑，但压到 2 以下最稳妥。
+- **分两条命令装。** `onnx==1.16.1` 会把 `protobuf` 升到 5.x，和 YOLOv5 依赖里那条
+  `protobuf<=3.20.1` 冲突，所以先把工具链依赖装完再装 onnx。
+- **pip 直连 PyPI 若报 `ssl: check_hostname requires server_hostname`**，换国内源即可：
+  追加 `-i https://pypi.tuna.tsinghua.edu.cn/simple`。
 - **不要用 Python 3.13/3.14**，torch 2.1.2 没有对应轮子。
+- 若因其它原因仍要装官方 Ultralytics v6.2：它对 numpy >= 1.24 有 `np.int` 兼容问题，
+  需把 `utils/dataloaders.py` 里的 `.astype(np.int)` 改成 `.astype(int)`（共 3 处），
+  项目 Dockerfile 里对应的就是 `sed -i 's/np\.int/int/g'`。
 
 #### 转 `.rknn`（x86 Ubuntu）
 
@@ -206,7 +207,7 @@ names: ['defect_a', 'defect_b', 'defect_c']  # 类别名
 ### 第 ③ 步：微调
 
 ```bash
-cd external/yolov5-ultralytics-v6.2
+cd external/yolov5-airockchip
 
 python train.py \
   --weights ../../weights/yolov5n_relu_objects365_best_epoch100.pt \
@@ -227,7 +228,21 @@ Windows PowerShell 下换成反引号续行或写一行即可，注意参数里�
 
 产物在 `outputs/my_run/weights/`，其中 **`best.pt` 就是你的模型**。
 
-✅ 日志里应出现类似 `Transferred 349/349 items from ...`，说明预训练权重被正确加载。
+✅ 日志里应出现 `Transferred ... items from ...`，说明预训练权重被正确加载。
+类别数与预训练不同时（例如 COCO 的 80 类 → 你的类别数），检测头那几个张量会被重新初始化，
+所以数字会小于总数——实测 2 类时为 `343/349`，属正常。
+
+⚠️ **务必确认激活函数没被换掉**，应看到 57 个 `ReLU`、0 个 `SiLU`：
+
+```python
+import collections
+import torch
+
+model = torch.load('outputs/my_run/weights/best.pt', map_location='cpu')['model']
+print(collections.Counter(type(m).__name__ for m in model.modules()))
+```
+
+如果这里出现的是 `SiLU: 57`，说明你走的不是 aiRockchip 分支，这次训练的产物不能用于 NPU 部署。
 
 ### 第 ④ 步：导出 RKNN 友好 ONNX
 
@@ -330,16 +345,18 @@ INT8 掉点严重时的处理方向：换更有代表性的校准图；或对敏
 
 ## 六、常见坑
 
-1. **拿错权重**：`*_coco_*` 是 80 类，`*_objects365_*` 是 365 类，别混。
-2. **把 SiLU 的官方权重用于这个 ReLU 流程**——两者不通用。
-3. **不微调直接转 `.rknn` 上板**——除非你确实就做 80 类通用检测，否则效果会很差。
-4. **Python 版本过高**：3.13/3.14 装不了 torch 2.1.2，也装不了 RKNN-Toolkit2。
-5. **numpy 2.x**：`np.int` 报错（见第 ① 步的兼容处理）。
-6. **在 Windows 上装 RKNN-Toolkit2**：装不上，必须 x86 Ubuntu。
-7. **输入尺寸 / 归一化前后不一致**：训练 640、导出 640、转换时的 `mean/std` 与训练一致，任何一环改了都会精度异常。
-8. **丢掉 `RK_anchors.txt`**：板端解不出正确坐标。
-9. **校准集不具代表性**：INT8 量化掉点的主因。
-10. **Toolkit2 与板端 NPU 版本不匹配**：转出来的 `.rknn` 加载失败。
+1. **用官方 Ultralytics v6.2 微调**：它会静默把 ReLU 换回 SiLU（导出 ONNX 里 `Relu` 算子是 0），
+   必须用 aiRockchip 的 `train.py`。见 [ADR-0006](adr/0006-fine-tune-with-airockchip-yolov5.md)。
+2. **拿错权重**：`*_coco_*` 是 80 类，`*_objects365_*` 是 365 类，别混。
+3. **把 SiLU 的官方权重用于这个 ReLU 流程**——两者不通用。
+4. **不微调直接转 `.rknn` 上板**——除非你确实就做 80 类通用检测，否则效果会很差。
+5. **Python 版本过高**：3.13/3.14 装不了 torch 2.1.2，也装不了 RKNN-Toolkit2。
+6. **numpy 2.x**：老代码里的 `np.int` 会报错（见第 ① 步的兼容处理）。
+7. **在 Windows 上装 RKNN-Toolkit2**：装不上，必须 x86 Ubuntu。
+8. **输入尺寸 / 归一化前后不一致**：训练 640、导出 640、转换时的 `mean/std` 与训练一致，任何一环改了都会精度异常。
+9. **丢掉 `RK_anchors.txt`**：板端解不出正确坐标。
+10. **校准集不具代表性**：INT8 量化掉点的主因。
+11. **Toolkit2 与板端 NPU 版本不匹配**：转出来的 `.rknn` 加载失败。
 
 ---
 
@@ -366,11 +383,10 @@ INT8 掉点严重时的处理方向：换更有代表性的校准图；或对敏
 | 路径 | 作用 |
 | --- | --- |
 | `weights/` | 下载后的预训练权重（本地目录，不进 Git） |
-| `external/yolov5-ultralytics-v6.2/` | 官方 v6.2，用于微调 |
-| `external/yolov5-airockchip/` | `d25a075`，用于 `--rknpu` 导出 ONNX |
+| `external/yolov5-airockchip/` | `d25a075`，**微调与 `--rknpu` 导出都用它** |
 | `scripts/download_weights.ps1` | Windows 权重下载 + SHA256 校验 |
 | `scripts/export_rknn_onnx.sh` | ONNX 导出 + onnx checker 校验 |
-| `scripts/smoke_finetune_official.sh` | 官方微调冒烟测试 |
+| `scripts/smoke_finetune_official.sh` | v6.2 权重加载兼容性冒烟（**不是**受支持的微调路径） |
 | `scripts/create_coco_smoke_subset.py` | 从 COCO 造迷你数据集 |
 | `tools/convert_mmyolo_yolov5_to_ultralytics.py` | 本 Release 使用的严格转换器（溯源用） |
 | `release/SHA256SUMS`、`release/models.json` | 下载校验与机器可读元数据 |

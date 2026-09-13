@@ -23,8 +23,10 @@
   `RK_anchors.txt`. It is an input to RKNN Toolkit2, not itself a `.rknn` model.
 
 **Primary training interface**
-: The official Ultralytics YOLOv5 v6.2 `train.py` workflow used by Release consumers.
-  MMYOLO is retained only as the provenance of training and conversion records.
+: The aiRockchip YOLOv5 `d25a075` `train.py` workflow used by Release consumers. Official
+  Ultralytics YOLOv5 v6.2 rebuilds the model from `model.yaml` and silently restores SiLU, so it
+  is not a supported fine-tuning entry point (ADR-0006). MMYOLO is retained only as the
+  provenance of training and conversion records.
 
 **Repository license**
 : GPL-3.0-only for this repository's scripts, Docker integration, and documentation.
@@ -53,8 +55,8 @@
   metadata accompany the six checkpoint assets in V1.
 
 **Supported toolchain**
-: Official Ultralytics YOLOv5 v6.2 for consumer fine-tuning and aiRockchip YOLOv5
-  commit `d25a075` for RKNN-friendly ONNX export.
+: aiRockchip YOLOv5 commit `d25a075` for both consumer fine-tuning and RKNN-friendly ONNX
+  export.
 
 **V1 deployment claim**
 : RKNN-friendly ONNX export has been verified. V1 makes no claim about a target-SoC
