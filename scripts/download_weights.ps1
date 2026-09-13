@@ -33,7 +33,7 @@
 param(
     [string]$OutDir,
     [string]$Pattern = "*",
-    [string]$BaseUrl = "https://github.com/thb1314/rk-yolov5-relu-object365-pretrained/releases/download/v0.1.0",
+    [string]$BaseUrl = "https://github.com/Edlward/rk-yolov5-relu-object365-pretrained/releases/download/v0.1.0",
     [switch]$VerifyOnly
 )
 
